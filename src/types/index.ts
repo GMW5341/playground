@@ -1,43 +1,31 @@
-// 프로토타입 시험장의 핵심 타입 정의
-
-export interface FeatureRequest {
-  id: string;
-  prompt: string;
-  createdAt: string;
-  category: "ui" | "api" | "fullstack";
-}
-
-export interface GeneratedComponent {
-  name: string;
-  code: string;
-  language: "tsx" | "ts" | "css";
-  description: string;
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface GeneratedAPI {
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  method: string;
   path: string;
   description: string;
   requestBody?: string;
-  responseBody: string;
-  code: string;
+  responseBody?: string;
 }
 
 export interface PrototypeResult {
   id: string;
-  request: FeatureRequest;
-  components: GeneratedComponent[];
+  preview: string; // 완전한 HTML 문서 (iframe srcDoc용)
+  code: string; // Claude가 생성한 원본 HTML 코드
   apis: GeneratedAPI[];
-  preview: string; // rendered HTML string for iframe preview
+  summary: string; // Claude의 응답 요약
+  conversationHistory: ChatMessage[];
   status: "generating" | "ready" | "error";
   error?: string;
   createdAt: string;
 }
 
-export interface ExperimentHistory {
+export interface Experiment {
   id: string;
-  title: string;
-  results: PrototypeResult[];
+  title: string; // 첫 프롬프트 기반 제목
+  result: PrototypeResult;
   createdAt: string;
-  updatedAt: string;
 }
