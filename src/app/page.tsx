@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Header from "@/components/Header";
-import ApiKeySetup from "@/components/ApiKeySetup";
 import PromptInput from "@/components/PromptInput";
 import PreviewPanel from "@/components/PreviewPanel";
 import ChatThread from "@/components/ChatThread";
@@ -112,7 +111,37 @@ export default function PlaygroundPage() {
     return (
       <>
         <Header apiKeyConfigured={false} />
-        <ApiKeySetup onComplete={handleApiKeyComplete} />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">API 키가 설정되지 않았습니다</h2>
+            <p className="text-gray-500 text-sm leading-relaxed mb-6">
+              Vercel 대시보드에서 <code className="bg-surface-100 px-1.5 py-0.5 rounded text-xs font-mono">ANTHROPIC_API_KEY</code> 환경변수를 설정해주세요.
+            </p>
+            <div className="card p-4 text-left text-sm space-y-3">
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                <p className="text-gray-600">Vercel 대시보드 &rarr; Settings &rarr; Environment Variables</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                <p className="text-gray-600">Key: <code className="bg-surface-100 px-1 rounded text-xs font-mono">ANTHROPIC_API_KEY</code></p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                <p className="text-gray-600">Value: Anthropic API 키 (sk-ant-...)</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">4</span>
+                <p className="text-gray-600">저장 후 Redeploy</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </>
     );
   }
