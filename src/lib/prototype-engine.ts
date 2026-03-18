@@ -135,22 +135,18 @@ export async function* streamGenerateWithClaude(
 
     let fullText = "";
 
-    stream.on("text", (text) => {
-      fullText += text;
-    });
-
-    // text 이벤트를 for-await로 수신
+    // for-await로 이벤트 수신하면서 텍스트 축적
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
         event.delta.type === "text_delta"
       ) {
+        fullText += event.delta.text;
         const chunk = JSON.stringify({ type: "text_delta", content: event.delta.text });
         yield `data: ${chunk}\n\n`;
       }
     }
 
-    // 스트림 완료 후 최종 메시지 가져오기
     const finalMessage = await stream.finalMessage();
     const assistantText = fullText;
 

@@ -114,8 +114,14 @@ export default function PlaygroundPage() {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "생성에 실패했습니다.");
+          let errorMsg = "생성에 실패했습니다.";
+          try {
+            const errorData = await response.json();
+            errorMsg = errorData.error || errorMsg;
+          } catch {
+            errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+          }
+          throw new Error(errorMsg);
         }
 
         // SSE 스트림 소비
@@ -142,79 +148,76 @@ export default function PlaygroundPage() {
             const jsonStr = line.slice(6);
             if (!jsonStr) continue;
 
+            let event: StreamEvent;
             try {
-              const event: StreamEvent = JSON.parse(jsonStr);
+              event = JSON.parse(jsonStr);
+            } catch {
+              // JSON 파싱 실패 - 불완전한 청크, 무시
+              continue;
+            }
 
-              if (event.type === "start") {
-                resultId = event.id;
-                // 생성 중 상태로 미리보기 표시
-                setCurrentResult({
+            if (event.type === "start") {
+              resultId = event.id;
+              setCurrentResult({
+                id: resultId,
+                preview: "",
+                code: "",
+                apis: [],
+                summary: "생성 중...",
+                conversationHistory: [...history, userMessage],
+                status: "generating",
+                createdAt: new Date().toISOString(),
+              });
+            } else if (event.type === "text_delta") {
+              fullStreamedText += event.content;
+              setStreamingText(fullStreamedText);
+            } else if (event.type === "complete") {
+              const result: PrototypeResult = {
+                id: resultId,
+                preview: event.html,
+                code: event.html,
+                apis: event.apis,
+                summary: event.summary,
+                conversationHistory: event.conversationHistory,
+                status: "ready",
+                createdAt: new Date().toISOString(),
+                usage: event.usage,
+              };
+
+              setCurrentResult(result);
+              setConversationHistory(event.conversationHistory);
+              setStreamingText("");
+
+              const isNew = history.length === 0;
+              if (isNew) {
+                const exp: Experiment = {
                   id: resultId,
-                  preview: "",
-                  code: "",
-                  apis: [],
-                  summary: "생성 중...",
-                  conversationHistory: [...history, userMessage],
-                  status: "generating",
-                  createdAt: new Date().toISOString(),
-                });
-              } else if (event.type === "text_delta") {
-                fullStreamedText += event.content;
-                setStreamingText(fullStreamedText);
-              } else if (event.type === "complete") {
-                const result: PrototypeResult = {
-                  id: resultId,
-                  preview: event.html,
-                  code: event.html,
-                  apis: event.apis,
-                  summary: event.summary,
-                  conversationHistory: event.conversationHistory,
-                  status: "ready",
-                  createdAt: new Date().toISOString(),
-                  usage: event.usage,
+                  title: prompt.slice(0, 40) || (files?.[0]?.name || "실험"),
+                  result,
+                  createdAt: result.createdAt,
                 };
-
-                setCurrentResult(result);
-                setConversationHistory(event.conversationHistory);
-                setStreamingText("");
-
-                // 실험 저장
-                const isNew = history.length === 0;
-                if (isNew) {
-                  const exp: Experiment = {
-                    id: resultId,
-                    title: prompt.slice(0, 40) || (files?.[0]?.name || "실험"),
-                    result,
-                    createdAt: result.createdAt,
-                  };
-                  setExperiments((prev) => [exp, ...prev]);
-                  setCurrentExpId(resultId);
-                  persistExperiment(exp);
-                  recordUsage(resultId, event.usage);
-                } else {
-                  const expId = currentExpIdRef.current;
-                  if (expId) {
-                    setExperiments((prev) =>
-                      prev.map((exp) => {
-                        if (exp.id === expId) {
-                          const updated = { ...exp, result };
-                          persistExperiment(updated);
-                          return updated;
-                        }
-                        return exp;
-                      })
-                    );
-                    recordUsage(expId, event.usage);
-                  }
+                setExperiments((prev) => [exp, ...prev]);
+                setCurrentExpId(resultId);
+                persistExperiment(exp);
+                recordUsage(resultId, event.usage);
+              } else {
+                const expId = currentExpIdRef.current;
+                if (expId) {
+                  setExperiments((prev) =>
+                    prev.map((exp) => {
+                      if (exp.id === expId) {
+                        const updated = { ...exp, result };
+                        persistExperiment(updated);
+                        return updated;
+                      }
+                      return exp;
+                    })
+                  );
+                  recordUsage(expId, event.usage);
                 }
-              } else if (event.type === "error") {
-                throw new Error(event.message);
               }
-            } catch (parseErr) {
-              // 이벤트 파싱 실패 시 에러가 아닌 경우만 무시
-              if (parseErr instanceof Error && parseErr.message !== jsonStr) {
-                throw parseErr;
-              }
+            } else if (event.type === "error") {
+              throw new Error(event.message);
             }
           }
         }
