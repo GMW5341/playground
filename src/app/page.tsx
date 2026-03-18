@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import ApiKeySetup from "@/components/ApiKeySetup";
 import PromptInput from "@/components/PromptInput";
@@ -9,19 +9,38 @@ import ChatThread from "@/components/ChatThread";
 import type { PrototypeResult, ChatMessage, Experiment } from "@/types";
 
 export default function PlaygroundPage() {
-  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null); // null = 확인 중
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentResult, setCurrentResult] = useState<PrototypeResult | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ChatMessage[]>([]);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
+  const [currentExpId, setCurrentExpId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const conversationRef = useRef(conversationHistory);
+  conversationRef.current = conversationHistory;
 
-  // 마운트 시 API 키 설정 여부 확인
+  // 마운트 시 API 키 + 실험 이력 로드
   useEffect(() => {
     fetch("/api/settings")
       .then((res) => res.json())
       .then((data) => setApiKeyConfigured(data.configured))
       .catch(() => setApiKeyConfigured(false));
+
+    fetch("/api/experiments")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setExperiments(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  // 실험을 서버에 저장하는 헬퍼
+  const persistExperiment = useCallback((exp: Experiment) => {
+    fetch("/api/experiments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(exp),
+    }).catch(() => {});
   }, []);
 
   const handleApiKeyComplete = useCallback(() => {
@@ -37,6 +56,7 @@ export default function PlaygroundPage() {
       setIsLoading(true);
       setError(null);
 
+      const history = conversationRef.current;
       const userMessage: ChatMessage = { role: "user", content: prompt };
       setConversationHistory((prev) => [...prev, userMessage]);
 
@@ -44,7 +64,7 @@ export default function PlaygroundPage() {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, conversationHistory }),
+          body: JSON.stringify({ prompt, conversationHistory: history }),
         });
 
         if (!response.ok) {
@@ -56,19 +76,27 @@ export default function PlaygroundPage() {
         setCurrentResult(result);
         setConversationHistory(result.conversationHistory);
 
-        if (conversationHistory.length === 0) {
-          setExperiments((prev) => [
-            {
-              id: result.id,
-              title: prompt.slice(0, 40),
-              result,
-              createdAt: result.createdAt,
-            },
-            ...prev,
-          ]);
-        } else {
+        // 새 실험 or 기존 실험 업데이트
+        if (history.length === 0) {
+          const exp: Experiment = {
+            id: result.id,
+            title: prompt.slice(0, 40),
+            result,
+            createdAt: result.createdAt,
+          };
+          setExperiments((prev) => [exp, ...prev]);
+          setCurrentExpId(result.id);
+          persistExperiment(exp);
+        } else if (currentExpId) {
           setExperiments((prev) =>
-            prev.map((exp, i) => (i === 0 ? { ...exp, result } : exp))
+            prev.map((exp) => {
+              if (exp.id === currentExpId) {
+                const updated = { ...exp, result };
+                persistExperiment(updated);
+                return updated;
+              }
+              return exp;
+            })
           );
         }
       } catch (err) {
@@ -80,22 +108,41 @@ export default function PlaygroundPage() {
         setIsLoading(false);
       }
     },
-    [conversationHistory]
+    [currentExpId, persistExperiment]
   );
 
   const handleNewExperiment = useCallback(() => {
     setCurrentResult(null);
     setConversationHistory([]);
+    setCurrentExpId(null);
     setError(null);
   }, []);
 
   const handleSelectExperiment = useCallback((exp: Experiment) => {
     setCurrentResult(exp.result);
     setConversationHistory(exp.result.conversationHistory);
+    setCurrentExpId(exp.id);
     setError(null);
   }, []);
 
-  // 로딩 중 (API 키 상태 확인)
+  const handleDeleteExperiment = useCallback(
+    (id: string) => {
+      setExperiments((prev) => prev.filter((e) => e.id !== id));
+      if (currentExpId === id) {
+        setCurrentResult(null);
+        setConversationHistory([]);
+        setCurrentExpId(null);
+      }
+      fetch("/api/experiments", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      }).catch(() => {});
+    },
+    [currentExpId]
+  );
+
+  // 로딩 중
   if (apiKeyConfigured === null) {
     return (
       <>
@@ -107,7 +154,7 @@ export default function PlaygroundPage() {
     );
   }
 
-  // API 키 미설정 → 브라우저에서 직접 입력
+  // API 키 미설정
   if (!apiKeyConfigured) {
     return (
       <>
@@ -117,13 +164,9 @@ export default function PlaygroundPage() {
     );
   }
 
-  // 메인 UI
   return (
     <>
-      <Header
-        apiKeyConfigured={true}
-        onApiKeyReset={handleApiKeyReset}
-      />
+      <Header apiKeyConfigured={true} onApiKeyReset={handleApiKeyReset} />
       <div className="flex-1 flex min-h-0">
         {/* 좌측: 실험 목록 사이드바 */}
         <div className="w-64 border-r border-surface-200 bg-white flex flex-col shrink-0">
@@ -142,25 +185,42 @@ export default function PlaygroundPage() {
               </p>
             ) : (
               experiments.map((exp) => (
-                <button
+                <div
                   key={exp.id}
-                  onClick={() => handleSelectExperiment(exp)}
-                  className={`w-full text-left p-2.5 rounded-lg text-sm transition-colors ${
-                    currentResult?.id === exp.id
-                      ? "bg-primary-50 text-primary-700"
-                      : "text-gray-600 hover:bg-surface-50"
+                  className={`group flex items-center gap-1 rounded-lg transition-colors ${
+                    currentExpId === exp.id
+                      ? "bg-primary-50"
+                      : "hover:bg-surface-50"
                   }`}
                 >
-                  <p className="font-medium truncate">{exp.title}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {new Date(exp.createdAt).toLocaleString("ko-KR", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </button>
+                  <button
+                    onClick={() => handleSelectExperiment(exp)}
+                    className={`flex-1 text-left p-2.5 text-sm min-w-0 ${
+                      currentExpId === exp.id
+                        ? "text-primary-700"
+                        : "text-gray-600"
+                    }`}
+                  >
+                    <p className="font-medium truncate">{exp.title}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(exp.createdAt).toLocaleString("ko-KR", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => handleDeleteExperiment(exp.id)}
+                    className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 transition-all shrink-0"
+                    title="삭제"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -198,7 +258,6 @@ export default function PlaygroundPage() {
               </div>
             </>
           ) : (
-            /* 빈 상태: 초기 화면 */
             <div className="flex-1 flex flex-col items-center justify-center p-8">
               <div className="max-w-lg text-center">
                 <div className="text-6xl mb-6 text-gray-200">&#9998;</div>
@@ -206,7 +265,7 @@ export default function PlaygroundPage() {
                   SaaS 프로토타입 시험장
                 </h2>
                 <p className="text-gray-500 mb-8 leading-relaxed">
-                  자연어로 원하는 기능을 설명하면 Claude가 실제 작동하는 UI를 생성합니다.
+                  자연어로 원하는 기능을 설명하면 Claude Opus가 Figma 수준의 UI를 생성합니다.
                   <br />
                   생성 후 &quot;차트 색상 바꿔줘&quot; 같은 수정 지시로 반복 개선할 수 있습니다.
                 </p>
@@ -229,19 +288,19 @@ export default function PlaygroundPage() {
                   <div className="p-4 bg-surface-50 rounded-xl">
                     <p className="text-sm font-medium text-gray-700">1. 설명</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      &quot;대시보드 만들어줘&quot; 같이 자연어로 입력
+                      &quot;칸반보드 만들어줘&quot; 같이 자연어로 입력
                     </p>
                   </div>
                   <div className="p-4 bg-surface-50 rounded-xl">
                     <p className="text-sm font-medium text-gray-700">2. 확인</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      실시간 미리보기로 UI와 코드 확인
+                      실시간 미리보기로 인터랙티브 UI 확인
                     </p>
                   </div>
                   <div className="p-4 bg-surface-50 rounded-xl">
                     <p className="text-sm font-medium text-gray-700">3. 수정</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      &quot;여기에 차트 추가&quot;로 반복 개선
+                      &quot;드래그 기능 추가&quot;로 반복 개선
                     </p>
                   </div>
                 </div>
