@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChatMessage, GeneratedAPI } from "@/types";
+import { getApiKey } from "@/lib/api-key-store";
 
 const SYSTEM_PROMPT = `당신은 B2B SaaS UI/UX 전문 개발자입니다. 사용자의 자연어 설명을 바탕으로 실제 작동하는 웹 UI를 생성합니다.
 
@@ -28,17 +29,14 @@ function parseResponse(text: string): {
   html: string;
   apis: GeneratedAPI[];
 } {
-  // 요약 추출: 첫 번째 코드블록 이전의 텍스트
   const firstCodeBlock = text.indexOf("```");
   const summary = firstCodeBlock > 0
     ? text.slice(0, firstCodeBlock).trim()
     : text.slice(0, 200).trim();
 
-  // HTML 코드블록 추출
   const htmlMatch = text.match(/```html\s*\n([\s\S]*?)```/);
   const html = htmlMatch ? htmlMatch[1].trim() : "";
 
-  // API 스펙 JSON 추출
   const apis: GeneratedAPI[] = [];
   const jsonMatch = text.match(/```json\s*\n([\s\S]*?)```/);
   if (jsonMatch) {
@@ -63,11 +61,11 @@ export async function generateWithClaude(
   apis: GeneratedAPI[];
   updatedHistory: ChatMessage[];
 }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getApiKey();
 
   if (!apiKey) {
     throw new Error(
-      "ANTHROPIC_API_KEY가 설정되지 않았습니다. .env 파일에 API 키를 추가해주세요."
+      "API 키가 설정되지 않았습니다. 설정에서 Anthropic API 키를 입력해주세요."
     );
   }
 
