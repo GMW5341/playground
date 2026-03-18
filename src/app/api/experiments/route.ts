@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadExperiments, saveExperiment, deleteExperiment } from "@/lib/experiment-store";
+import { deleteExperimentUsage } from "@/lib/usage-store";
 import type { Experiment } from "@/types";
 
 // 실험 목록 조회
@@ -25,6 +26,7 @@ export async function DELETE(request: Request) {
   try {
     const { id } = await request.json();
     const success = deleteExperiment(id);
+    deleteExperimentUsage(id);
     return NextResponse.json({ success });
   } catch (error) {
     console.error("Experiment delete error:", error);

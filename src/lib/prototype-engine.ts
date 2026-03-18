@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatMessage, GeneratedAPI } from "@/types";
+import type { ChatMessage, GeneratedAPI, TokenUsage } from "@/types";
 import { getApiKey } from "@/lib/api-key-store";
 
 const SYSTEM_PROMPT = `당신은 세계 최고 수준의 UI/UX 디자이너이자 프론트엔드 개발자입니다.
@@ -96,6 +96,7 @@ export async function generateWithClaude(
   html: string;
   apis: GeneratedAPI[];
   updatedHistory: ChatMessage[];
+  usage: TokenUsage;
 }> {
   const apiKey = getApiKey();
 
@@ -122,10 +123,19 @@ export async function generateWithClaude(
 
   const { summary, html, apis } = parseResponse(assistantText);
 
+  const usage: TokenUsage = {
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    estimatedCostUsd:
+      (response.usage.input_tokens / 1_000_000) * 15 +
+      (response.usage.output_tokens / 1_000_000) * 75,
+    timestamp: new Date().toISOString(),
+  };
+
   const updatedHistory: ChatMessage[] = [
     ...conversationHistory,
     { role: "assistant", content: assistantText },
   ];
 
-  return { summary, html, apis, updatedHistory };
+  return { summary, html, apis, updatedHistory, usage };
 }

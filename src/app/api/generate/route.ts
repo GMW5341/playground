@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       { role: "user", content: prompt.trim() },
     ];
 
-    const { summary, html, apis, updatedHistory } =
+    const { summary, html, apis, updatedHistory, usage } =
       await generateWithClaude(messages);
 
     if (!html) {
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       conversationHistory: updatedHistory,
       status: "ready",
       createdAt: new Date().toISOString(),
+      usage,
     });
   } catch (error) {
     const message =

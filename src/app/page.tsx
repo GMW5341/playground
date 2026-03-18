@@ -6,7 +6,7 @@ import ApiKeySetup from "@/components/ApiKeySetup";
 import PromptInput from "@/components/PromptInput";
 import PreviewPanel from "@/components/PreviewPanel";
 import ChatThread from "@/components/ChatThread";
-import type { PrototypeResult, ChatMessage, Experiment } from "@/types";
+import type { PrototypeResult, ChatMessage, Experiment, UsageSummary } from "@/types";
 
 export default function PlaygroundPage() {
   const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null);
@@ -16,10 +16,11 @@ export default function PlaygroundPage() {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [currentExpId, setCurrentExpId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const conversationRef = useRef(conversationHistory);
   conversationRef.current = conversationHistory;
 
-  // 마운트 시 API 키 + 실험 이력 로드
+  // 마운트 시 API 키 + 실험 이력 + 사용량 로드
   useEffect(() => {
     fetch("/api/settings")
       .then((res) => res.json())
@@ -31,6 +32,11 @@ export default function PlaygroundPage() {
       .then((data) => {
         if (Array.isArray(data)) setExperiments(data);
       })
+      .catch(() => {});
+
+    fetch("/api/usage")
+      .then((res) => res.json())
+      .then(setUsageSummary)
       .catch(() => {});
   }, []);
 
@@ -87,6 +93,18 @@ export default function PlaygroundPage() {
           setExperiments((prev) => [exp, ...prev]);
           setCurrentExpId(result.id);
           persistExperiment(exp);
+
+          // 사용량 기록
+          if (result.usage) {
+            fetch("/api/usage", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ experimentId: result.id, usage: result.usage }),
+            })
+              .then((res) => res.json())
+              .then(setUsageSummary)
+              .catch(() => {});
+          }
         } else if (currentExpId) {
           setExperiments((prev) =>
             prev.map((exp) => {
@@ -98,6 +116,18 @@ export default function PlaygroundPage() {
               return exp;
             })
           );
+
+          // 사용량 기록
+          if (result.usage) {
+            fetch("/api/usage", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ experimentId: currentExpId, usage: result.usage }),
+            })
+              .then((res) => res.json())
+              .then(setUsageSummary)
+              .catch(() => {});
+          }
         }
       } catch (err) {
         setError(
@@ -138,6 +168,15 @@ export default function PlaygroundPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       }).catch(() => {});
+
+      // 사용량도 함께 삭제
+      fetch("/api/usage", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ experimentId: id }),
+      })
+        .then(() => fetch("/api/usage").then((r) => r.json()).then(setUsageSummary))
+        .catch(() => {});
     },
     [currentExpId]
   );
@@ -166,7 +205,7 @@ export default function PlaygroundPage() {
 
   return (
     <>
-      <Header apiKeyConfigured={true} onApiKeyReset={handleApiKeyReset} />
+      <Header apiKeyConfigured={true} onApiKeyReset={handleApiKeyReset} usageSummary={usageSummary} />
       <div className="flex-1 flex min-h-0">
         {/* 좌측: 실험 목록 사이드바 */}
         <div className="w-64 border-r border-surface-200 bg-white flex flex-col shrink-0">
@@ -202,13 +241,23 @@ export default function PlaygroundPage() {
                     }`}
                   >
                     <p className="font-medium truncate">{exp.title}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {new Date(exp.createdAt).toLocaleString("ko-KR", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                      <span>
+                        {new Date(exp.createdAt).toLocaleString("ko-KR", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      {(() => {
+                        const eu = usageSummary?.experiments.find((u) => u.experimentId === exp.id);
+                        return eu ? (
+                          <span className="text-gray-300">
+                            {(eu.totalInputTokens + eu.totalOutputTokens).toLocaleString("ko-KR")}t
+                          </span>
+                        ) : null;
+                      })()}
                     </p>
                   </button>
                   <button

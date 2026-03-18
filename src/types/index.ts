@@ -11,6 +11,28 @@ export interface GeneratedAPI {
   responseBody?: string;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+  timestamp: string;
+}
+
+export interface ExperimentUsage {
+  experimentId: string;
+  calls: TokenUsage[];
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+}
+
+export interface UsageSummary {
+  experiments: ExperimentUsage[];
+  allTimeInputTokens: number;
+  allTimeOutputTokens: number;
+  allTimeCostUsd: number;
+}
+
 export interface PrototypeResult {
   id: string;
   preview: string; // 완전한 HTML 문서 (iframe srcDoc용)
@@ -21,6 +43,7 @@ export interface PrototypeResult {
   status: "generating" | "ready" | "error";
   error?: string;
   createdAt: string;
+  usage?: TokenUsage;
 }
 
 export interface Experiment {
