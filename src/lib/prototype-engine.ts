@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatMessage, GeneratedAPI, TokenUsage } from "@/types";
+import type { ChatMessage, GeneratedAPI, TokenUsage, ContentBlock } from "@/types";
 import { getApiKey } from "@/lib/api-key-store";
 
 const SYSTEM_PROMPT = `당신은 세계 최고 수준의 UI/UX 디자이너이자 프론트엔드 개발자입니다.
@@ -59,7 +59,7 @@ Figma에서 디자인한 것처럼 정교하고, 실제 프로덕션에 바로 �
 - 이전 HTML 전체를 수정된 버전으로 다시 출력 (전체 코드)
 - 변경 사항을 요약에서 설명`;
 
-function parseResponse(text: string): {
+export function parseResponse(text: string): {
   summary: string;
   html: string;
   apis: GeneratedAPI[];
@@ -69,7 +69,6 @@ function parseResponse(text: string): {
     ? text.slice(0, firstCodeBlock).trim()
     : text.slice(0, 300).trim();
 
-  // HTML 코드블록 추출 - 더 관대한 매칭
   const htmlMatch = text.match(/```html\s*\n?([\s\S]*?)```/);
   const html = htmlMatch ? htmlMatch[1].trim() : "";
 
@@ -89,53 +88,100 @@ function parseResponse(text: string): {
   return { summary, html, apis };
 }
 
-export async function generateWithClaude(
+/**
+ * 대화 이력에서 Claude API에 전달할 메시지 형식으로 변환
+ * assistant 메시지의 content가 string이면 그대로 사용,
+ * user 메시지의 content가 ContentBlock[]이면 그대로 전달
+ */
+function toApiMessages(history: ChatMessage[]) {
+  return history.map((msg) => {
+    if (typeof msg.content === "string") {
+      return { role: msg.role as "user" | "assistant", content: msg.content };
+    }
+    // ContentBlock[] → Anthropic API 형식
+    return {
+      role: msg.role as "user" | "assistant",
+      content: msg.content as ContentBlock[],
+    };
+  });
+}
+
+/**
+ * 스트리밍 생성 - SSE 이벤트를 yield하는 async generator
+ */
+export async function* streamGenerateWithClaude(
   conversationHistory: ChatMessage[]
-): Promise<{
-  summary: string;
-  html: string;
-  apis: GeneratedAPI[];
-  updatedHistory: ChatMessage[];
-  usage: TokenUsage;
-}> {
+): AsyncGenerator<string> {
   const apiKey = getApiKey();
 
   if (!apiKey) {
-    throw new Error(
-      "API 키가 설정되지 않았습니다. 설정에서 Anthropic API 키를 입력해주세요."
-    );
+    const event = JSON.stringify({ type: "error", message: "API 키가 설정되지 않았습니다." });
+    yield `data: ${event}\n\n`;
+    return;
   }
+
+  const id = `proto_${Date.now()}`;
+  yield `data: ${JSON.stringify({ type: "start", id })}\n\n`;
 
   const client = new Anthropic({ apiKey });
 
-  const response = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 16384,
-    system: SYSTEM_PROMPT,
-    messages: conversationHistory.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-    })),
-  });
+  try {
+    const stream = client.messages.stream({
+      model: "claude-opus-4-20250514",
+      max_tokens: 16384,
+      system: SYSTEM_PROMPT,
+      messages: toApiMessages(conversationHistory),
+    });
 
-  const assistantText =
-    response.content[0].type === "text" ? response.content[0].text : "";
+    let fullText = "";
 
-  const { summary, html, apis } = parseResponse(assistantText);
+    stream.on("text", (text) => {
+      fullText += text;
+    });
 
-  const usage: TokenUsage = {
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-    estimatedCostUsd:
-      (response.usage.input_tokens / 1_000_000) * 15 +
-      (response.usage.output_tokens / 1_000_000) * 75,
-    timestamp: new Date().toISOString(),
-  };
+    // text 이벤트를 for-await로 수신
+    for await (const event of stream) {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "text_delta"
+      ) {
+        const chunk = JSON.stringify({ type: "text_delta", content: event.delta.text });
+        yield `data: ${chunk}\n\n`;
+      }
+    }
 
-  const updatedHistory: ChatMessage[] = [
-    ...conversationHistory,
-    { role: "assistant", content: assistantText },
-  ];
+    // 스트림 완료 후 최종 메시지 가져오기
+    const finalMessage = await stream.finalMessage();
+    const assistantText = fullText;
 
-  return { summary, html, apis, updatedHistory, usage };
+    const { summary, html, apis } = parseResponse(assistantText);
+
+    const usage: TokenUsage = {
+      inputTokens: finalMessage.usage.input_tokens,
+      outputTokens: finalMessage.usage.output_tokens,
+      estimatedCostUsd:
+        (finalMessage.usage.input_tokens / 1_000_000) * 15 +
+        (finalMessage.usage.output_tokens / 1_000_000) * 75,
+      timestamp: new Date().toISOString(),
+    };
+
+    // assistant 응답을 대화 이력에 추가 (저장 시에는 text만)
+    const updatedHistory: ChatMessage[] = [
+      ...conversationHistory,
+      { role: "assistant", content: assistantText },
+    ];
+
+    const completeEvent = JSON.stringify({
+      type: "complete",
+      summary,
+      html,
+      apis,
+      usage,
+      conversationHistory: updatedHistory,
+    });
+    yield `data: ${completeEvent}\n\n`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "생성 중 오류 발생";
+    yield `data: ${JSON.stringify({ type: "error", message })}\n\n`;
+  }
 }
